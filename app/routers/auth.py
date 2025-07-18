@@ -1,144 +1,176 @@
-from fastapi import APIRouter, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel, EmailStr
+# app/routers/auth.py
 from typing import Optional
-import jwt
-from datetime import datetime, timedelta
-import bcrypt
 
-from app.config import settings
+# FastAPI 관련 임포트 (한 줄씩 명시적으로)
+from fastapi import APIRouter
+from fastapi import HTTPException
+from fastapi import status
+from fastapi import Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.schemas import (
+    SMSRequest, SMSVerifyRequest, UserRegisterRequest, UserLoginRequest,
+    SMSResponse, SMSVerifyResponse, LoginResponse, UserResponse, ApiResponse
+)
+from app.services.auth_service import AuthService
+from app.utils.auth import verify_token
+from app.models import User
 
 router = APIRouter()
 security = HTTPBearer()
 
-# Pydantic 모델 (요청/응답 스키마)
-class UserRegister(BaseModel):
-    email: EmailStr
-    password: str
-    username: str
-    phone: Optional[str] = None
-
-class UserLogin(BaseModel):
-    email: EmailStr
-    password: str
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    expires_in: int
-
-class UserResponse(BaseModel):
-    user_id: int
-    email: str
-    username: str
-    user_type: str
-    created_at: datetime
-
-# 임시 사용자 저장소 (실제로는 DB 사용)
-fake_users_db = {
-    "admin@farmtoken.com": {
-        "user_id": 1,
-        "email": "admin@farmtoken.com",
-        "username": "admin",
-        "password_hash": "$2b$12$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31lW",  # "admin123"
-        "user_type": "admin",
-        "created_at": datetime.now()
-    }
-}
-
-# 유틸리티 함수들
-def hash_password(password: str) -> str:
-    """비밀번호 해싱"""
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """비밀번호 검증"""
-    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
-
-def create_access_token(data: dict) -> str:
-    """JWT 토큰 생성"""
-    to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
-
-    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-
-def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
-    """JWT 토큰 검증"""
-    try:
-        payload = jwt.decode(credentials.credentials, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        email: str = payload.get("sub")
-        if email is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-# API 엔드포인트들
-@router.post("/register", response_model=UserResponse)
-async def register(user_data: UserRegister):
-    """회원가입"""
-    if user_data.email in fake_users_db:
+# 의존성: 현재 사용자 가져오기
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db)
+) -> User:
+    """JWT 토큰에서 현재 사용자 가져오기"""
+    payload = verify_token(credentials.credentials)
+    if not payload:
         raise HTTPException(
-            status_code=400,
-            detail="Email already registered"
-        )
-
-    # 사용자 생성
-    user_id = len(fake_users_db) + 1
-    hashed_password = hash_password(user_data.password)
-
-    new_user = {
-        "user_id": user_id,
-        "email": user_data.email,
-        "username": user_data.username,
-        "password_hash": hashed_password,
-        "user_type": "customer",
-        "created_at": datetime.now()
-    }
-
-    fake_users_db[user_data.email] = new_user
-
-    return UserResponse(**new_user)
-
-@router.post("/login", response_model=Token)
-async def login(user_data: UserLogin):
-    """로그인"""
-    user = fake_users_db.get(user_data.email)
-    if not user or not verify_password(user_data.password, user["password_hash"]):
-        raise HTTPException(
-            status_code=401,
-            detail="Incorrect email or password"
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="유효하지 않은 토큰입니다",
+            headers={"WWW-Authenticate": "Bearer"},
         )
     
-    # JWT 토큰 생성
-    access_token = create_access_token(data= {"sub": user["email"], "user_id":user["user_id"]})
+    user_id = payload.get("user_id")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="토큰에서 사용자 정보를 찾을 수 없습니다"
+        )
+    
+    auth_service = AuthService(db)
+    user = auth_service.get_current_user(user_id)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="사용자를 찾을 수 없습니다"
+        )
+    
+    return user
 
-    return Token(
-        access_token=access_token,
-        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
-    )
+# API 엔드포인트들
+@router.post("/send-sms", response_model=SMSResponse)
+def send_sms_verification(
+    request: SMSRequest,
+    db: Session = Depends(get_db)
+):
+    """SMS 인증번호 발송"""
+    auth_service = AuthService(db)
+    try:
+        result = auth_service.send_sms_verification(request.phone_number)
+        return SMSResponse(**result)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"서버 오류가 발생했습니다: {str(e)}"
+        )
+
+@router.post("/verify-sms", response_model=SMSVerifyResponse)
+def verify_sms_code(
+    request: SMSVerifyRequest,
+    db: Session = Depends(get_db)
+):
+    """SMS 인증번호 확인"""
+    auth_service = AuthService(db)
+    try:
+        result = auth_service.verify_sms_code(request.phone_number, request.verification_code)
+        return SMSVerifyResponse(**result)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"서버 오류가 발생했습니다: {str(e)}"
+        )
+
+@router.post("/register", response_model=LoginResponse)
+def register_user(
+    request: UserRegisterRequest,
+    db: Session = Depends(get_db)
+):
+    """회원가입"""
+    auth_service = AuthService(db)
+    try:
+        result = auth_service.register_user(request)
+        
+        # LoginResponse 형태로 변환
+        return LoginResponse(
+            access_token=result["access_token"],
+            token_type=result["token_type"],
+            expires_in=30 * 60,  # 30분 (초 단위)
+            user=UserResponse(**result["user"])
+        )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"서버 오류가 발생했습니다: {str(e)}"
+        )
+
+@router.post("/login", response_model=LoginResponse)
+def login_user(
+    request: UserLoginRequest,
+    db: Session = Depends(get_db)
+):
+    """로그인"""
+    auth_service = AuthService(db)
+    try:
+        result = auth_service.login_user(request)
+        
+        # LoginResponse 형태로 변환
+        return LoginResponse(
+            access_token=result["access_token"],
+            token_type=result["token_type"],
+            expires_in=30 * 60,  # 30분 (초 단위)
+            user=UserResponse(**result["user"])
+        )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"서버 오류가 발생했습니다: {str(e)}"
+        )
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user(token_data: dict = Depends(verify_token)):
+def get_current_user_info(
+    current_user: User = Depends(get_current_user)
+):
     """현재 사용자 정보 조회"""
-    user = fake_users_db(token_data["sub"])
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    return UserResponse(**current_user.to_dict())
 
-    return UserResponse(**user)
+@router.post("/logout", response_model=ApiResponse)
+def logout_user(
+    current_user: User = Depends(get_current_user)
+):
+    """로그아웃 (클라이언트에서 토큰 삭제)"""
+    return ApiResponse(
+        success=True,
+        message="로그아웃이 완료되었습니다"
+    )
 
-@router.post("/logout")
-async def logout():
-    """로그아웃 (클라이언트 토큰 삭제)"""
-    return {"message": "Successfully logged out"}
+@router.get("/test", response_model=ApiResponse)
+def test_auth():
+    """인증 API 테스트"""
+    return ApiResponse(
+        success=True,
+        message="인증 API가 정상 작동합니다",
+        data={"timestamp": "2024-01-01 12:00:00"}
+    )
 
 # 관리자 권한 확인 의존성
-async def require_admin(token_data: dict = Depends(verify_token)):
-    """관리자 권한 필요"""
-    user = fake_users_db.get(token_data["sub"])
-    if not user or user["user_type"] != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return user
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    """관리자 권한 필요한 엔드포인트용"""
+    if current_user.user_type != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="관리자 권한이 필요합니다"
+        )
+    return current_user

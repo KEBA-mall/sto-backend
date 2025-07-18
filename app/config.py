@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
 
     # DB 설정 (나중에 연결할 때 사용)
-    DATABASE_URL: str = "postgresql://username:password@localhost:5432//faank_db" # db url 연결하기
+    DATABASE_URL: Optional[str] = None
 
     # JWT 토큰 설정
     SECRET_KEY: str = "your-secret-key" # secret key
@@ -54,7 +54,9 @@ settings = Settings()
 # 환경별 설정 오버라이드
 if settings.ENVIRONMENT == "production":
     settings.DEBUG = False
-    settings.SECRET_KEY = os.getenv("SECRET_KEY", "production-secret-key")
+    secret_key = os.getenv("SECRET_KEY")
+    if secret_key:
+        settings.SECRET_KEY = secret_key
 
 elif settings.ENVIRONMENT == "development":
     settings.DEBUG = True
