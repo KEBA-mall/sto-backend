@@ -38,11 +38,11 @@ class User(Base):
 
 class SMSVerification(Base):
     """SMS 인증 모델"""
-    __tablename__ = "sms_verification"
+    __tablename__ = "sms_verifications"
 
     id = Column(Integer, primary_key=True, index=True)
     phone_number = Column(String(11), nullable=False, index=True)
-    verifications_code = Column(String(6), nullable=False)
+    verification_code = Column(String(6), nullable=False)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     attempts = Column(Integer, default=0)
     is_verified = Column(Boolean, default=False)

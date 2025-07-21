@@ -1,11 +1,5 @@
 # app/routers/auth.py
-from typing import Optional
-
-# FastAPI 관련 임포트 (한 줄씩 명시적으로)
-from fastapi import APIRouter
-from fastapi import HTTPException
-from fastapi import status
-from fastapi import Depends
+from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
