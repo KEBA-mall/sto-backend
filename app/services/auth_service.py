@@ -68,150 +68,150 @@ class AuthService:
             "message": f"{mask_phone_number(phone_number)}로 인증번호를 발송했습니다"
         }
 
-def verify_sms_code(self, phone_number: str, verification_code: str) -> dict:
-    """SMS 인증번호 확인"""
-    phone_number = format_phone_number(phone_number)
+    def verify_sms_code(self, phone_number: str, verification_code: str) -> dict:
+        """SMS 인증번호 확인"""
+        phone_number = format_phone_number(phone_number)
 
-    # 저장된 인증번호 조회
-    sms_verification = self.db.query(SMSVerification).filter(
-        SMSVerification.phone_number == phone_number,
-        SMSVerification.is_verified == False
-    ).order_by(SMSVerification.created_at.desc()).first()
+        # 저장된 인증번호 조회
+        sms_verification = self.db.query(SMSVerification).filter(
+            SMSVerification.phone_number == phone_number,
+            SMSVerification.is_verified == False
+        ).order_by(SMSVerification.created_at.desc()).first()
 
-    if not sms_verification:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="발송된 인증번호가 없습니다"
-        )
-    
-    # 만료 확인
-    if sms_verification.is_expired():
-        self.db.delete(sms_verification)
+        if not sms_verification:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="발송된 인증번호가 없습니다"
+            )
+        
+        # 만료 확인
+        if sms_verification.is_expired():
+            self.db.delete(sms_verification)
+            self.db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="인증번호가 만료되었습니다"
+            )
+
+        # 시도 횟수 확인
+        if not sms_verification.is_valid_attempt():
+            self.db.delete(sms_verification)
+            self.db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="인증 시도 횟수를 초과했습니다"
+            )
+
+        # 인증번호 확인
+        if sms_verification.verification_code != verification_code:
+            sms_verification.attempts += 1
+            self.db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="인증번호가 올바르지 않습니다"
+            )
+        
+        # 인증 성공
+        sms_verification = True
         self.db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="인증번호가 만료되었습니다"
+
+        # 임시 검증 토큰 생성 (회원가입 진행용)
+        verification_token = create_verification_token(phone_number)
+
+        return {
+            "success": True,
+            "message": "핸드폰 번호 인증이 완료되었습니다",
+            "verification": verification_code
+        }
+
+    def register_user(self, user_data: UserRegisterRequest) -> dict:
+        """회원가입"""
+        phone_number = format_phone_number(user_data.phone_number)
+
+        # 중복 확인
+        existing_user = self.db.query(User).filter(User.phone_number == phone_number)
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="이미 가입된 핸드폰 번호입니다"
+            )
+        
+        # SMS 인증 완료 확인 (선택사항 - 더 엄격한 검증을 원할 경우)
+        # verified_sms = self.db.query(SMSVerification).filter(
+        #     SMSVerification.phone_number == phone_number,
+        #     SMSVerification.is_verified == True
+        # ).first()
+        # if not verified_sms:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_400_BAD_REQUEST,
+        #         detail="핸드폰 번호 인증이 필요합니다"
+        #     )
+
+        # 사용자 생성
+        hashed_password = hash_password(user_data.password)
+        new_user = User(
+            phone_number=phone_number,
+            password_hash=hashed_password,
+            user_name=user_data.user_name,
+            user_type="customer"
         )
 
-    # 시도 횟수 확인
-    if not sms_verification.is_valid_attempt():
-        self.db.delete(sms_verification)
+        self.db.add(new_user)
         self.db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="인증 시도 횟수를 초과했습니다"
-        )
+        self.db.refresh(new_user)
 
-    # 인증번호 확인
-    if sms_verification.verification_code != verification_code:
-        sms_verification.attempts += 1
+        # 사용자 SMS 인증 데이터 삭제
+        self.db.query(SMSVerification).filter(
+            SMSVerification.phone_number == phone_number
+        ).delete()
         self.db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="인증번호가 올바르지 않습니다"
-        )
-    
-    # 인증 성공
-    sms_verification = True
-    self.db.commit()
 
-    # 임시 검증 토큰 생성 (회원가입 진행용)
-    verification_token = create_verification_token(phone_number)
-
-    return {
-        "success": True,
-        "message": "핸드폰 번호 인증이 완료되었습니다",
-        "verification": verification_code
-    }
-
-def register_user(self, user_data: UserRegisterRequest) -> dict:
-    """회원가입"""
-    phone_number = format_phone_number(user_data.phone_number)
-
-    # 중복 확인
-    existing_user = self.db.query(User).filter(User.phone_number == phone_number)
-    if existing_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="이미 가입된 핸드폰 번호입니다"
-        )
-    
-    # SMS 인증 완료 확인 (선택사항 - 더 엄격한 검증을 원할 경우)
-    # verified_sms = self.db.query(SMSVerification).filter(
-    #     SMSVerification.phone_number == phone_number,
-    #     SMSVerification.is_verified == True
-    # ).first()
-    # if not verified_sms:
-    #     raise HTTPException(
-    #         status_code=status.HTTP_400_BAD_REQUEST,
-    #         detail="핸드폰 번호 인증이 필요합니다"
-    #     )
-
-    # 사용자 생성
-    hashed_password = hash_password(user_data.password)
-    new_user = User(
-        phone_number=phone_number,
-        password_hash=hashed_password,
-        user_name=user_data.user_name,
-        user_type="customer"
-    )
-
-    self.db.add(new_user)
-    self.db.commit()
-    self.db.refresh(new_user)
-
-    # 사용자 SMS 인증 데이터 삭제
-    self.db.query(SMSVerification).filter(
-        SMSVerification.phone_number == phone_number
-    ).delete()
-    self.db.commit()
-
-    # JWT 토큰 생성
-    access_token = create_access_token(
-        data={"user_id": new_user.user_id, "phone_number": phone_number}
-    )
-
-    return {
-        "success": True,
-        "message": "회원가입이 완료되었습니다",
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": new_user.to_dict()
-    }
-
-def login_user(self, login_data: UserLoginRequest) -> dict:
-    """로그인"""
-    phone_number = format_phone_number(login_data.phone_number)
-
-    # 사용자 조회
-    user = self.db.query(User).filter(
-        User.phone_number == phone_number,
-        User.is_active == True
-    ).first()
-
-    if not user or not verify_password(login_data.password, user.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="핸드폰 번호 또는 비밀번호가 올바르지 않습니다"
+        # JWT 토큰 생성
+        access_token = create_access_token(
+            data={"user_id": new_user.user_id, "phone_number": phone_number}
         )
 
-    # JWT 토큰 생성
-    access_token = create_access_token(
-        data={"user_id": user.user_id, "phone_number": phone_number}
-    )
+        return {
+            "success": True,
+            "message": "회원가입이 완료되었습니다",
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": new_user.to_dict()
+        }
 
-    return {
-        "success": True,
-        "message": "로그인이 완료되었습니다",
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user": user.to_dict()
-    }
+    def login_user(self, login_data: UserLoginRequest) -> dict:
+        """로그인"""
+        phone_number = format_phone_number(login_data.phone_number)
 
-def get_current_user(self, user_id: int) -> Optional[User]:
-    """현재 사용자 정보 조회"""
-    return self.db.query(User).filter(
-        User.user_id == user_id,
-        User.is_active == True,
-    ).first()
+        # 사용자 조회
+        user = self.db.query(User).filter(
+            User.phone_number == phone_number,
+            User.is_active == True
+        ).first()
+
+        if not user or not verify_password(login_data.password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="핸드폰 번호 또는 비밀번호가 올바르지 않습니다"
+            )
+
+        # JWT 토큰 생성
+        access_token = create_access_token(
+            data={"user_id": user.user_id, "phone_number": phone_number}
+        )
+
+        return {
+            "success": True,
+            "message": "로그인이 완료되었습니다",
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": user.to_dict()
+        }
+
+    def get_current_user(self, user_id: int) -> Optional[User]:
+        """현재 사용자 정보 조회"""
+        return self.db.query(User).filter(
+            User.user_id == user_id,
+            User.is_active == True,
+        ).first()
 

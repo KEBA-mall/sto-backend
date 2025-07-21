@@ -30,7 +30,7 @@ if os.path.exists("static"):
 # 라우터 import 및 등록
 try:
     from app.routers import auth
-    app.include_router(auth.roster, prefix="/api/auth", tags=["인증"])
+    app.include_router(auth.router, prefix="/api/auth", tags=["인증"])
     print("✅ Auth router registered successfully")
 except ImportError as e:
     print(f"❌ Auth router import failed: {e}")
