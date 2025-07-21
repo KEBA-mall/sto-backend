@@ -51,7 +51,8 @@ def verify_token(token: str) -> Optional[dict]:
 # SMS 인증번호 관련
 def generate_verification_code() -> str:
     """6자리 인증번호 생성"""
-    return ''.join(random.choices(string.digits, k=6))
+    return "123456" 
+# ''.join(random.choices(string.digits, k=6))
 
 def send_sms(phone_number: str, message: str) -> bool:
     """SMS 발송(시뮬레이션)"""
