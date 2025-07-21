@@ -49,7 +49,7 @@ class SMSVerification(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     def __repr__(self):
-        return f"<SMSVerification(phone_number={self.phone_number}, code={self.verifications_code}, expires_at={self.expires_at})>"
+        return f"<SMSVerification(phone_number={self.phone_number}, code={self.verification_code}, expires_at={self.expires_at})>"
 
     def is_expired(self):
         """인증번호 만료 여부 확인"""
