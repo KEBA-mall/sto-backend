@@ -121,7 +121,7 @@ class AuthService:
         return {
             "success": True,
             "message": "핸드폰 번호 인증이 완료되었습니다",
-            "verification": verification_code
+            "verification": verification_token
         }
 
     def register_user(self, user_data: UserRegisterRequest) -> dict:
@@ -129,7 +129,7 @@ class AuthService:
         phone_number = format_phone_number(user_data.phone_number)
 
         # 중복 확인
-        existing_user = self.db.query(User).filter(User.phone_number == phone_number)
+        existing_user = self.db.query(User).filter(User.phone_number == phone_number).first()
         if existing_user:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -152,7 +152,7 @@ class AuthService:
         new_user = User(
             phone_number=phone_number,
             password_hash=hashed_password,
-            user_name=user_data.user_name,
+            user_name="김팽크",
             user_type="customer"
         )
 
